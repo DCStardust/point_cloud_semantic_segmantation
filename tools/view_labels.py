@@ -92,15 +92,48 @@ def read_label(path):
     sem = (lbl & 0xFFFF).astype(np.int64)
     return sem
 
+# 读取 velodyne 点云
+def read_velodyne_bin(bin_path):
+    scan = np.fromfile(bin_path, dtype=np.float32)
+    assert scan.size % 4 == 0, f"file {bin_path} size not divisible by 4"
+    points = scan.reshape((-1, 4))  # [N, 4] -> x, y, z, remission
+    return points
+
+# 查看一帧点云 + 对应 label 的基本信息
+def inspect_one_frame(root, seq="00", idx=0):
+    seq_dir = os.path.join(root, seq)
+    velodyne_dir = os.path.join(seq_dir, "velodyne")
+    label_dir    = os.path.join(seq_dir, "labels")
+
+    bin_path   = os.path.join(velodyne_dir, f"{idx:06d}.bin")
+    label_path = os.path.join(label_dir,    f"{idx:06d}.label")
+
+    points = read_velodyne_bin(bin_path)          # [N,4]
+    labels = np.fromfile(label_path, dtype=np.uint32)
+    # SemanticKITTI 里 label 的低 16 位才是语义 id
+    sem_ids = labels & 0xFFFF
+
+    print(f"=== sequence {seq}, frame {idx:06d} ===")
+    print("points shape:", points.shape)          # (N,4)
+    print("xyz min:", points[:, :3].min(axis=0))
+    print("xyz max:", points[:, :3].max(axis=0))
+    print("remission min/max:", points[:, 3].min(), points[:, 3].max())
+    uniq, cnt = np.unique(sem_ids, return_counts=True)
+    print("unique semantic ids in this frame:")
+    for u, c in zip(uniq, cnt):
+        print(f"  id {u:3d}: {c:7d} pts")
+
 if __name__ == "__main__":
     # 1) 3D-Curb-Dataset-all
     curb_root = r"G:\ChenXinting\Public_data\3D-Curb-Dataset-all"
-    scan_semkitti_like_dataset(curb_root)
+    # scan_semkitti_like_dataset(curb_root)
+    # 查看单帧点云结构
+    inspect_one_frame(curb_root, seq="00", idx=0)
 
-    # 2) Lcdet-NRS-Dataset
-    nrs_velo = r"G:\ChenXinting\Public_data\Lcdet-NRS-Dataset\transfer_velodyne"
-    nrs_label = r"G:\ChenXinting\Public_data\Lcdet-NRS-Dataset\transfer_labels"
-    scan_flat_dataset(nrs_velo, nrs_label)
+    # # 2) Lcdet-NRS-Dataset
+    # nrs_velo = r"G:\ChenXinting\Public_data\Lcdet-NRS-Dataset\transfer_velodyne"
+    # nrs_label = r"G:\ChenXinting\Public_data\Lcdet-NRS-Dataset\transfer_labels"
+    # scan_flat_dataset(nrs_velo, nrs_label)
 
     # # 3) 单个检查-3D-Curb-Dataset
     # root = r"G:\ChenXinting\Public_data\3D-Curb-Dataset-all"
