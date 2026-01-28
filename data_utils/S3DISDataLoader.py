@@ -67,14 +67,19 @@ class S3DISDataset(Dataset):
         # normalize
         selected_points = points[selected_point_idxs, :]  # num_point * 6
         current_points = np.zeros((self.num_point, 9))  # num_point * 9
+        # 1、全局位置编码
         current_points[:, 6] = selected_points[:, 0] / self.room_coord_max[room_idx][0]
         current_points[:, 7] = selected_points[:, 1] / self.room_coord_max[room_idx][1]
         current_points[:, 8] = selected_points[:, 2] / self.room_coord_max[room_idx][2]
+        # 2、局部坐标中心化
         selected_points[:, 0] = selected_points[:, 0] - center[0]
         selected_points[:, 1] = selected_points[:, 1] - center[1]
+        # 3、rgb数值范围归一化
         selected_points[:, 3:6] /= 255.0
+
         current_points[:, 0:6] = selected_points
         current_labels = labels[selected_point_idxs]
+
         if self.transform is not None:
             current_points, current_labels = self.transform(current_points, current_labels)
         return current_points, current_labels
