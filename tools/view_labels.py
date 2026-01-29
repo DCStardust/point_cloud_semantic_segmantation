@@ -126,9 +126,10 @@ def inspect_one_frame(root, seq="00", idx=0):
 if __name__ == "__main__":
     # 1) 3D-Curb-Dataset-all
     curb_root = r"G:\ChenXinting\Public_data\3D-Curb-Dataset-all"
-    # scan_semkitti_like_dataset(curb_root)
+    scan_semkitti_like_dataset(curb_root)
+
     # 查看单帧点云结构
-    inspect_one_frame(curb_root, seq="00", idx=0)
+    # inspect_one_frame(curb_root, seq="00", idx=0)
 
     # # 2) Lcdet-NRS-Dataset
     # nrs_velo = r"G:\ChenXinting\Public_data\Lcdet-NRS-Dataset\transfer_velodyne"

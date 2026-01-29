@@ -5,7 +5,7 @@ Date: Nov 2019
 import argparse
 import os
 from data_utils.S3DISDataLoader import S3DISDataset
-from data_utils.SemanticKITTICurbDataLoader import SemanticKITTICurbDataset
+from data_utils.SemanticKITTICurbDataLoader import SemanticKITTICurbDataset, RAW2TRAIN, NUM_CLASSES
 import torch
 import datetime
 import logging
@@ -22,13 +22,25 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = BASE_DIR
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
 
-classes = ['ceiling', 'floor', 'wall', 'beam', 'column', 'window', 'door', 'table', 'chair', 'sofa', 'bookcase',
-           'board', 'clutter']
+classes = [
+    'other',        # 0
+    'road',         # 1
+    'curb',         # 2
+    'sidewalk',     # 3
+    'building',     # 4
+    'fence',        # 5
+    'lane_marking', # 6
+    'pole',         # 7
+    'traffic_sign', # 8
+    'terrain',      # 9
+    'vegetation',   # 10
+    'human',        # 11
+    'vehicle',      # 12
+]
+
 class2label = {cls: i for i, cls in enumerate(classes)}
 seg_classes = class2label
-seg_label_to_cat = {}
-for i, cat in enumerate(seg_classes.keys()):
-    seg_label_to_cat[i] = cat
+seg_label_to_cat = {i: cat for i, cat in enumerate(seg_classes.keys())}
 
 def inplace_relu(m):
     classname = m.__class__.__name__
@@ -37,7 +49,7 @@ def inplace_relu(m):
 
 def parse_args():
     parser = argparse.ArgumentParser('Model')
-    parser.add_argument('--model', type=str, default='pointnet_sem_seg', help='model name [default: pointnet_sem_seg]')
+    parser.add_argument('--model', type=str, default='pointnet2_sem_seg_msg', help='model name [default: pointnet_sem_seg]')
     parser.add_argument('--batch_size', type=int, default=16, help='Batch Size during training [default: 16]')
     parser.add_argument('--epoch', default=32, type=int, help='Epoch to run [default: 32]')
     parser.add_argument('--learning_rate', default=0.001, type=float, help='Initial learning rate [default: 0.001]')
@@ -52,6 +64,10 @@ def parse_args():
 
     return parser.parse_args()
 
+def worker_init_fn(worker_id):
+    # 完全等价于原来的 lambda：x + int(time.time())
+    seed = worker_id + int(time.time())
+    np.random.seed(seed)
 
 def main(args):
     def log_string(str):
@@ -90,24 +106,51 @@ def main(args):
     log_string(args)
 
     DATA_ROOT = r"G:\ChenXinting\Public_data\3D-Curb-Dataset-all"
-    NUM_CLASSES = 13
+    # NUM_CLASSES = 13
     NUM_POINT = args.npoint
     BATCH_SIZE = args.batch_size
 
-    print("start loading training data ...")
-    TRAIN_DATASET = SemanticKITTICurbDataset(root=DATA_ROOT, split='train', num_point=NUM_POINT, test_area=args.test_area, block_size=1.0, sample_rate=1.0, transform=None)
-    print("start loading test data ...")
-    TEST_DATASET = SemanticKITTICurbDataset(root=DATA_ROOT, split='test',num_point=NUM_POINT, test_area=args.test_area, block_size=1.0, sample_rate=1.0, transform=None)
+    # toy实验
+    # train_seqs = ['00']
+    # val_seqs = ['08']
+    # test_seqs = ['00']
 
-    trainDataLoader = torch.utils.data.DataLoader(TRAIN_DATASET, batch_size=BATCH_SIZE, shuffle=True, num_workers=10,
-                                                  pin_memory=True, drop_last=True,
-                                                  worker_init_fn=lambda x: np.random.seed(x + int(time.time())))
-    testDataLoader = torch.utils.data.DataLoader(TEST_DATASET, batch_size=BATCH_SIZE, shuffle=False, num_workers=10,
-                                                 pin_memory=True, drop_last=True)
+    print("start loading training data ...")
+    TRAIN_DATASET = SemanticKITTICurbDataset(
+        root=DATA_ROOT,
+        split='train',
+        num_point=NUM_POINT,
+        label_map=RAW2TRAIN,
+        # sequences=train_seqs,
+    )
+    print("start loading val data ...")
+    VAL_DATASET = SemanticKITTICurbDataset(
+        root=DATA_ROOT,
+        split='val',
+        num_point=NUM_POINT,
+        label_map=RAW2TRAIN,
+        # sequences=val_seqs,
+    )
+
+    trainDataLoader = torch.utils.data.DataLoader(TRAIN_DATASET,
+                                                  batch_size=BATCH_SIZE,
+                                                  shuffle=True,
+                                                  num_workers=4,
+                                                  pin_memory=True,
+                                                  drop_last=True,
+                                                  worker_init_fn=worker_init_fn,
+                                                  )
+    valDataLoader = torch.utils.data.DataLoader(VAL_DATASET,
+                                                batch_size=BATCH_SIZE,
+                                                shuffle=False,
+                                                num_workers=4,
+                                                pin_memory=True,
+                                                drop_last=True
+                                                )
     weights = torch.Tensor(TRAIN_DATASET.labelweights).cuda()
 
     log_string("The number of training data is: %d" % len(TRAIN_DATASET))
-    log_string("The number of test data is: %d" % len(TEST_DATASET))
+    log_string("The number of val data is: %d" % len(VAL_DATASET))
 
     '''MODEL LOADING'''
     MODEL = importlib.import_module(args.model)
@@ -218,7 +261,7 @@ def main(args):
 
         '''Evaluate on chopped scenes'''
         with torch.no_grad():
-            num_batches = len(testDataLoader)
+            num_batches = len(valDataLoader)
             total_correct = 0
             total_seen = 0
             loss_sum = 0
@@ -229,7 +272,7 @@ def main(args):
             classifier = classifier.eval()
 
             log_string('---- EPOCH %03d EVALUATION ----' % (global_epoch + 1))
-            for i, (points, target) in tqdm(enumerate(testDataLoader), total=len(testDataLoader), smoothing=0.9):
+            for i, (points, target) in tqdm(enumerate(valDataLoader), total=len(valDataLoader), smoothing=0.9):
                 points = points.data.numpy()
                 points = torch.Tensor(points)
                 points, target = points.float().cuda(), target.long().cuda()
@@ -256,12 +299,13 @@ def main(args):
                     total_iou_deno_class[l] += np.sum(((pred_val == l) | (batch_label == l)))
 
             labelweights = labelweights.astype(np.float32) / np.sum(labelweights.astype(np.float32))
-            mIoU = np.mean(np.array(total_correct_class) / (np.array(total_iou_deno_class, dtype=np.float) + 1e-6))
+            mIoU = np.mean(np.array(total_correct_class) / (np.array(total_iou_deno_class, dtype=np.float64) + 1e-6))
+
             log_string('eval mean loss: %f' % (loss_sum / float(num_batches)))
             log_string('eval point avg class IoU: %f' % (mIoU))
             log_string('eval point accuracy: %f' % (total_correct / float(total_seen)))
             log_string('eval point avg class acc: %f' % (
-                np.mean(np.array(total_correct_class) / (np.array(total_seen_class, dtype=np.float) + 1e-6))))
+                np.mean(np.array(total_correct_class) / (np.array(total_seen_class, dtype=np.float64) + 1e-6))))
 
             iou_per_class_str = '------- IoU --------\n'
             for l in range(NUM_CLASSES):
